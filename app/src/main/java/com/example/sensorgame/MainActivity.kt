@@ -1,7 +1,6 @@
 package com.example.sensorgame
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -13,66 +12,73 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Bundle
-import android.os.Handler
 import android.util.DisplayMetrics
-import android.util.Log
 import android.view.LayoutInflater
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatImageView
+import androidx.lifecycle.ViewModelProvider
 
 
 class MainActivity : AppCompatActivity(), SensorEventListener {
 
-    var ball = ShapeDrawable()
-    var sensorManager: SensorManager? = null
-    var accelerometer: Sensor? = null
+    lateinit var ball: ShapeDrawable
+    private var accelerometer: Sensor? = null
     var dWidth = 0
     var dHeight = 0
-    var wTouched = false
     var animatedView: AnimatedView? = null
+    private lateinit var gameViewModel: GameViewModel
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
-            super.onCreate(savedInstanceState)
-            counter = 5
-            animatedView = AnimatedView(this)
-            val displayMetrics = DisplayMetrics()
-            sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-            accelerometer = sensorManager!!.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-            windowManager.defaultDisplay.getMetrics(displayMetrics)
-            dHeight = displayMetrics.heightPixels - 150
-            dWidth = displayMetrics.widthPixels - 150
-            Log.v("Y Size:", dHeight.toString())
-            Log.v("X Size:", dWidth.toString())
-            xAcc = dWidth / 3
-            yAcc = dHeight / 3
+        super.onCreate(savedInstanceState)
+
+        gameViewModel = ViewModelProvider(this)[GameViewModel::class.java]
+
+        initializeDisplayMetrics()
+        resetPosition()
+        setupAccelerometer()
+        initializeAnimatedView()
+    }
+
+    private fun initializeDisplayMetrics() {
+        val displayMetrics = DisplayMetrics().apply {
+            val display = windowManager.currentWindowMetrics.bounds
+            widthPixels = display.width()
+            heightPixels = display.height()
+        }
+        dHeight = displayMetrics.heightPixels - 150
+        dWidth = displayMetrics.widthPixels - 150
+    }
+
+    private fun setupAccelerometer() {
+        val sensorService = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        sensorService?.let {
+            accelerometer = it.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+
             if (accelerometer != null) {
-                sensorManager!!.registerListener(
+                it.registerListener(
                     this,
                     accelerometer,
                     SensorManager.SENSOR_DELAY_FASTEST
                 )
             }
-            setContentView(animatedView)
+        }
     }
 
+    private fun initializeAnimatedView() {
+        animatedView = AnimatedView(this)
+        setContentView(animatedView)
+    }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER && gameViewModel.isBallMoving) {
             xAcc -= event.values[0].toInt()
             yAcc += event.values[1].toInt()
-            if (xAcc > dWidth) {
-                xAcc = dWidth
-                LostFunc()
-            } else if (xAcc < 0) {
-                xAcc = 0
-                LostFunc()
-            }
-            if (yAcc > dHeight - 100) {
-                yAcc = dHeight - 100
-                LostFunc()
-            } else if (yAcc < 0) {
-                yAcc = 0
+
+            if (xAcc > dWidth || xAcc < 0 || yAcc > dHeight - 100 || yAcc < 0) {
+                xAcc = xAcc.coerceIn(0, dWidth)
+                yAcc = yAcc.coerceIn(0, dHeight - 100)
                 LostFunc()
             }
         }
@@ -85,23 +91,18 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     }
 
     fun LostFunc() {
-        wTouched = true
         resetPosition()
-        if (counter > 0) {
-            counter--
-            onPause()
+        if (gameViewModel.counter > 0) {
+            gameViewModel.decrementCounter()
         } else {
+            gameViewModel.isBallMoving = false
             showQuestionDialog()
         }
     }
 
-    fun reset(){
-        val handler = Handler()
-        handler.postDelayed({
-            val intent = Intent(this@MainActivity, MainActivity::class.java)
-            startActivity(intent)
-        }, 0)
-        counter = 5
+    fun reset() {
+        gameViewModel.resetGame()
+        resetPosition()
     }
 
     fun resetPosition() {
@@ -112,27 +113,32 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     inner class AnimatedView(context: Context?) :
 
         AppCompatImageView(context!!) {
-        var paint = Paint()
+        private var paint = Paint()
         override fun onDraw(canvas: Canvas) {
-            paint.color = Color.BLACK
-            paint.isFakeBoldText= true
-            paint.typeface= Typeface.SERIF
-            paint.textSize = 60f
-            ball.setBounds(
-                xAcc,
-                yAcc,
-                xAcc + Companion.width,
-                yAcc + Companion.height
-            )
-            canvas.drawColor(Color.parseColor("#FAE0FF"))
-            canvas.drawText(
-                "Lifes you have: " + Integer.toString(counter),
-                150f,
-                100f,
-                paint
-            )
-            ball.draw(canvas)
+            drawBackground(canvas)
+            drawLivesText(canvas)
+            drawBall(canvas)
             invalidate()
+        }
+
+        private fun drawBackground(canvas: Canvas) {
+            canvas.drawColor(Color.parseColor("#FAE0FF"))
+        }
+
+        private fun drawLivesText(canvas: Canvas) {
+            paint.color = Color.BLACK
+            paint.isFakeBoldText = true
+            paint.typeface = Typeface.SERIF
+            paint.textSize = 60f
+            canvas.drawText("Stay away from the edges!", 150f, 100f, paint)
+            canvas.drawText("Lifes you have: ${gameViewModel.counter}", 150f, 200f, paint)
+
+        }
+
+        private fun drawBall(canvas: Canvas) {
+            paint.color = Color.BLACK
+            ball.setBounds(xAcc, yAcc, xAcc + Companion.width, yAcc + Companion.height)
+            ball.draw(canvas)
         }
 
         init {
@@ -163,6 +169,5 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         const val height = 100
         var xAcc = 0
         var yAcc = 0
-        var counter = 5
     }
 }
